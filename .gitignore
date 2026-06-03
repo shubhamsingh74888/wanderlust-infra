@@ -1,0 +1,16 @@
+# Terraform
+*.tfplan
+*.plan
+tfplan
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+crash.log
+
+# Packer
+packer_cache/
+*.box
+
+# OS
+.DS_Store

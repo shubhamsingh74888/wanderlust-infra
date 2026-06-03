@@ -1,0 +1,33 @@
+# ============================================================
+# Wanderlust Terraform Perimeter Security (.gitignore)
+# Prevents binary bloat, runtime locks, and credential leaks
+# ============================================================
+
+# ── 1. Local Configuration & Cache Directories ────────────────
+.terraform/
+.terraform.d/
+
+# ── 2. Local State Storage (Backup files stay local) ──────────
+*.tfstate
+*.tfstate.*
+
+# ── 3. Crash Logs & Override Flags ────────────────────────────
+*.clog
+.terraformrc
+terraform.rc
+
+# ── 4. Ignore Local Variables & Credentials ───────────────────
+# We ignore standard tfvars so developers don't accidentally leak real passwords.
+# BUT, we keep our env folder trackable since it holds structural input parameters.
+*.tfvars
+!env/dev.tfvars
+!env/prod.tfvars
+
+# ── 5. System & Text Editor Artifacts ─────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+*.tfplan
+*.plan
