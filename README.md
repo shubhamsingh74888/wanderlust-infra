@@ -312,7 +312,7 @@ Terraform state is stored in S3 and locked via DynamoDB, isolated per environmen
 
 > **Note on the `dynamodb_table` deprecation warning:** This is a cosmetic warning from the AWS provider v5.x about the new `use_lockfile` parameter. State locking continues to work correctly and the warning is safe to ignore.
 
----
+--
 
 ## Shared Library
 
@@ -407,7 +407,7 @@ aws dynamodb put-item \
 
 ---
 
-## Related Repositories
+# Related Repositories
 
 | Repository | Purpose |
 |---|---|
