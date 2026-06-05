@@ -6,7 +6,7 @@
 environment  = "dev"
 project = "wanderlust"
 aws_region   = "ap-south-1"
-key_name = "portfolio-key-pair"
+key_name = "infra"
 # ── Core Network Topology ─────────────────────────────────────
 vpc_cidr             = "10.0.0.0/16"
 public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
