@@ -9,7 +9,7 @@ packer {
 
 variable "aws_region"    { default = "ap-south-1" }
 variable "base_ami"      { default = "ami-0dee22c13ea7a9a67" }
-variable "instance_type" { default = "t3.large" }
+variable "instance_type" { default = "t3.small" }
 
 source "amazon-ebs" "jenkins" {
   region            = var.aws_region
