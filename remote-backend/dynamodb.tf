@@ -1,5 +1,5 @@
 resource "aws_dynamodb_table" "basic-dynamo-table" {
-  name = "wanderlust-shubham-${terraform.workspace}"
+  name = "wanderlust-dynamodb-table-${terraform.workspace}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key = "LockID"
 
