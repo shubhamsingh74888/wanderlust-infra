@@ -9,15 +9,6 @@ echo "=== USER-DATA STARTING: $(date) ==="
 REPO_URL="https://github.com/shubhamsingh74888/Wanderlust-Mega-Project.git"
 REPO_DIR="/opt/wanderlust"
 
-# If repo is PRIVATE, fetch token from SSM first:
-# GITHUB_TOKEN=$(aws ssm get-parameter \
-#   --name "/wanderlust/github-token" \
-#   --with-decryption \
-#   --region ${region} \
-#   --query 'Parameter.Value' \
-#   --output text)
-# REPO_URL="https://shubhamsingh74888:$GITHUB_TOKEN@github.com/shubhamsingh74888/Wanderlust-Mega-Project.git"
-
 if [ ! -d "$REPO_DIR/.git" ]; then
   echo "[REPO] Cloning project repo..."
   git clone "$REPO_URL" "$REPO_DIR"
@@ -48,9 +39,13 @@ if [ -n "$DEVICE" ]; then
   blkid "$DEVICE" || mkfs.ext4 -L jenkins-data "$DEVICE"
   mkdir -p /mnt/jenkins-data
   mount "$DEVICE" /mnt/jenkins-data
+  
+  # Register in fstab using UUID (Best Practice)
   DEVICE_UUID=$(blkid -s UUID -o value "$DEVICE")
-  grep -q "$DEVICE_UUID" /etc/fstab \
-    || echo "UUID=$DEVICE_UUID /mnt/jenkins-data ext4 defaults,nofail 0 2" >> /etc/fstab
+  if ! grep -q "$DEVICE_UUID" /etc/fstab; then
+    echo "UUID=$DEVICE_UUID /mnt/jenkins-data ext4 defaults,nofail 0 2" >> /etc/fstab
+  fi
+  
   mkdir -p /mnt/jenkins-data/jenkins-home /mnt/jenkins-data/sonarqube
   JENKINS_HOME="/mnt/jenkins-data/jenkins-home"
   SQ_BASE_DIR="/mnt/jenkins-data/sonarqube"
@@ -62,34 +57,22 @@ fi
 # 2. Configure JENKINS_HOME via systemd override
 mkdir -p /etc/systemd/system/jenkins.service.d
 
-# Create systemd mount unit for EBS volume
-cat > /etc/systemd/system/mnt-jenkins\x2ddata.mount << MOUNTUNIT
-[Unit]
-Description=Jenkins EBS Data Volume
-After=local-fs.target
-
-[Mount]
-What=/dev/xvdf
-Where=/mnt/jenkins-data
-Type=ext4
-Options=defaults,nofail
-
-[Install]
-WantedBy=multi-user.target
-MOUNTUNIT
-
+# Let systemd read fstab changes and turn our mount into a native tracking unit
 systemctl daemon-reload
-systemctl enable mnt-jenkins\x2ddata.mount || true
 
+# Create a clean dependency override that references the native fstab mount target
 cat > /etc/systemd/system/jenkins.service.d/override.conf << OVERRIDE
 [Unit]
-After=mnt-jenkins\x2ddata.mount network-online.target
-Wants=mnt-jenkins\x2ddata.mount
+After=mnt-jenkinsdata.mount network-online.target
+Wants=mnt-jenkinsdata.mount
 
 [Service]
 Environment="JENKINS_HOME=${JENKINS_HOME}"
 Environment="JAVA_OPTS=-Djenkins.install.runSetupWizard=false -Djava.awt.headless=true"
 OVERRIDE
+
+# Fixed path syntax for user creation and execution paths
+mkdir -p "$JENKINS_HOME"
 chown -R jenkins:jenkins "$JENKINS_HOME"
 systemctl daemon-reload
 echo "[CONFIG] ✔ JENKINS_HOME set to: $JENKINS_HOME"
@@ -97,8 +80,7 @@ echo "[CONFIG] ✔ JENKINS_HOME set to: $JENKINS_HOME"
 # 3. Restore from S3 backup (environment-specific, dynamic)
 BACKUP_BUCKET="${backup_s3_bucket}"
 BACKUP_PREFIX="jenkins-backup/${environment}"
-BACKUP_EXISTS=$(aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/" \
-  --region ${region} 2>/dev/null | wc -l || echo 0)
+BACKUP_EXISTS=$(aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/" --region ${region} 2>/dev/null | wc -l || echo 0)
 
 if [ "$BACKUP_EXISTS" -gt 0 ]; then
   echo "[RESTORE] Found backup at s3://$BACKUP_BUCKET/$BACKUP_PREFIX/ — restoring..."
@@ -136,10 +118,9 @@ else
 fi
 
 # 5. Add jenkins user to docker group so pipelines can run docker commands
-usermod -aG docker jenkins
-chmod 666 /var/run/docker.sock
+usermod -aG docker jenkins || true
+chmod 666 /var/run/docker.sock || true
 echo "[DOCKER] ✔ Jenkins added to docker group"
-
 
 # ── Install kubectl if not present (from Packer AMI) ─────────
 if ! command -v kubectl &>/dev/null; then
@@ -152,12 +133,15 @@ fi
 
 # ── Symlinks — ensure all tools in /usr/bin (Jenkins PATH) ───
 for tool in kubectl helm argocd eksctl terraform; do
-  [ -f "/usr/local/bin/$tool" ] && ln -sf "/usr/local/bin/$tool" "/usr/bin/$tool" &&     echo "[SYMLINK] ✔ /usr/bin/$tool -> /usr/local/bin/$tool" || true
+  [ -f "/usr/local/bin/$tool" ] && ln -sf "/usr/local/bin/$tool" "/usr/bin/$tool" && echo "[SYMLINK] ✔ /usr/bin/$tool -> /usr/local/bin/$tool" || true
 done
 
 # ── Jenkins user PATH fix ─────────────────────────────────────
 JPATH_FILE="$JENKINS_HOME/.bashrc"
-grep -q '/usr/local/bin' "$JPATH_FILE" 2>/dev/null ||   echo 'export PATH=$PATH:/usr/local/bin' >> "$JPATH_FILE" || true
+mkdir -p "$(dirname "$JPATH_FILE")"
+touch "$JPATH_FILE"
+grep -q '/usr/local/bin' "$JPATH_FILE" 2>/dev/null || echo 'export PATH=$PATH:/usr/local/bin' >> "$JPATH_FILE"
+chown -R jenkins:jenkins "$JENKINS_HOME"
 
 echo "[PATH] ✔ Tools symlinked and PATH configured"
 
@@ -167,19 +151,13 @@ echo "[START] ✔ Jenkins started"
 
 # 7. S3 backup cron
 cat > /etc/cron.d/jenkins-s3-backup << CRONEOF
-0 2 * * * root aws s3 sync $JENKINS_HOME s3://$BACKUP_BUCKET/$BACKUP_PREFIX/ \
-  --region ${region} \
-  --exclude "*/workspace/*" \
-  --exclude "*.tmp" \
-  --exclude "*/cache/*" \
-  >> /var/log/jenkins-backup.log 2>&1
+0 2 * * * root aws s3 sync $JENKINS_HOME s3://$BACKUP_BUCKET/$BACKUP_PREFIX/ --region ${region} --exclude "*/workspace/*" --exclude "*.tmp" --exclude "*/cache/*" >> /var/log/jenkins-backup.log 2>&1
 CRONEOF
 chmod 644 /etc/cron.d/jenkins-s3-backup
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/public-ipv4)
+# 8. Fetch dynamic metadata info
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
 
 echo "=========================================================="
 echo "  BOOTSTRAP COMPLETE: $(date)"
@@ -188,4 +166,3 @@ echo "  Jenkins  : http://$PUBLIC_IP:8080"
 echo "  SonarQube: http://$PUBLIC_IP:9000"
 echo "  Data dir : $JENKINS_HOME  (on EBS)"
 echo "=========================================================="
-

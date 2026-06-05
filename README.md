@@ -314,7 +314,7 @@ Terraform state is stored in S3 and locked via DynamoDB, isolated per environmen
 
 --
 
-## Shared Library
+# Shared Library
 
 All pipeline stage logic lives in the `shared-lib` repository and is loaded via `@Library('Shared') _`. This keeps the `Jenkinsfile` in this repo thin and the reusable logic centralised.
 

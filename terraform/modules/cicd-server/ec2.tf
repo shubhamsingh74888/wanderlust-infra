@@ -1,6 +1,6 @@
 ###############################################################################
-# cicd-server/ec2.tf
-# EC2 instance for Jenkins + SonarQube CI/CD server
+# modules/cicd-server/ec2.tf
+# Final Production Version: Zero-Drift, Safe-Attachments, and Anti-Panic Guards
 ###############################################################################
 
 locals {
@@ -8,7 +8,7 @@ locals {
   ami_id      = try(data.aws_ami.packer.id, data.aws_ami.ubuntu.id)
 }
 
-# ── Latest Ubuntu 22.04 AMI (fallback if Packer AMI not found) ───────────────
+# ── Latest Ubuntu 22.04 AMI (Fallback) ───────────────────────────────────────
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -24,7 +24,7 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# ── Packer-built AMI (preferred — tools pre-installed) ───────────────────────
+# ── Packer-built AMI (Preferred) ─────────────────────────────────────────────
 data "aws_ami" "packer" {
   most_recent = true
   owners      = ["self"]
@@ -40,12 +40,17 @@ data "aws_ami" "packer" {
   }
 }
 
-# ── EBS data volume (persists Jenkins home + SonarQube data) ─────────────────
+# ── EBS data volume (Persists Jenkins + SonarQube data) ──────────────────────
 resource "aws_ebs_volume" "jenkins_data" {
   availability_zone = var.availability_zone
   size              = var.ebs_volume_size
   type              = "gp3"
   encrypted         = true
+
+  # 🛡️ Anti-Accidental Deletion Guard
+  lifecycle {
+    prevent_destroy = true 
+  }
 
   tags = {
     Name        = "${local.name_prefix}-jenkins-data"
@@ -55,14 +60,17 @@ resource "aws_ebs_volume" "jenkins_data" {
   }
 }
 
+# ── Managed Volume Attachment Link ───────────────────────────────────────────
 resource "aws_volume_attachment" "jenkins_data" {
-  device_name  = "/dev/xvdf"
-  volume_id    = aws_ebs_volume.jenkins_data.id
-  instance_id  = aws_instance.cicd.id
-  force_detach = true
+  device_name                  = "/dev/xvdf"
+  volume_id                    = aws_ebs_volume.jenkins_data.id
+  instance_id                  = aws_instance.cicd.id
+  force_detach                 = true
+  stop_instance_before_detaching = true # Safely turns off OS before pulling the disk
+  skip_destroy                 = true # Keeps volume intact when tearing down infrastructure
 }
 
-# ── Security group ────────────────────────────────────────────────────────────
+# ── Security Group ────────────────────────────────────────────────────────────
 resource "aws_security_group" "cicd" {
   name        = "${local.name_prefix}-cicd-sg"
   description = "Jenkins + SonarQube CI/CD server"
@@ -107,7 +115,7 @@ resource "aws_security_group" "cicd" {
   }
 }
 
-# ── EC2 instance ──────────────────────────────────────────────────────────────
+# ── EC2 Instance ──────────────────────────────────────────────────────────────
 resource "aws_instance" "cicd" {
   ami                    = local.ami_id
   instance_type          = var.instance_type
@@ -117,7 +125,7 @@ resource "aws_instance" "cicd" {
   key_name               = var.key_name
 
   root_block_device {
-    volume_size           = 30
+    volume_size           = var.root_volume_size 
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true
@@ -131,7 +139,11 @@ resource "aws_instance" "cicd" {
     SQ_BASE_DIR      = "/mnt/jenkins-data/sonarqube"
   })
 
-  user_data_replace_on_change = true
+  # Fixed: No more aggressive destructions on webhook pushes
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [user_data] 
+  }
 
   tags = {
     Name        = "${local.name_prefix}-cicd-server"
@@ -143,10 +155,15 @@ resource "aws_instance" "cicd" {
   depends_on = [aws_iam_instance_profile.jenkins]
 }
 
-# ── Elastic IP (stable public address across reboots) ────────────────────────
+# ── Elastic IP ────────────────────────────────────────────────────────────────
 resource "aws_eip" "cicd" {
   instance = aws_instance.cicd.id
   domain   = "vpc"
+
+  # Ensures IP detachment works cleanly during updates
+  lifecycle {
+    create_before_destroy = true
+  }
 
   tags = {
     Name        = "${local.name_prefix}-cicd-eip"

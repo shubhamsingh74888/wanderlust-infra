@@ -31,13 +31,9 @@ module "cicd_server" {
   availability_zone = var.availability_zones[0]
   ebs_volume_size   = var.jenkins_data_volume_size
   key_name          = var.key_name
-  # ami_id removed — module now auto-picks latest Packer AMI
 }
 
 # ── Step 3: Build the EKS Cluster ────────────────────────────
-# NOTE: jenkins_role_arn is NOT passed here.
-# access_entries.tf inside the module hardcodes it via
-# data.aws_caller_identity — no variable needed.
 module "eks" {
   source = "./modules/eks"
   count  = var.deploy_eks ? 1 : 0
@@ -59,8 +55,6 @@ module "eks" {
 }
 
 # ── Step 4: Install ArgoCD via Helm ──────────────────────────
-# Lives at root level (NOT inside modules/eks) to break provider cycle.
-# depends_on ensures cluster is fully ready before Helm connects.
 resource "helm_release" "argocd" {
   count = var.deploy_eks && var.deploy_addons ? 1 : 0
 
@@ -88,4 +82,3 @@ resource "helm_release" "argocd" {
 
   depends_on = [module.eks]
 }
-
