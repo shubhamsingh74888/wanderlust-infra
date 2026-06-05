@@ -28,7 +28,7 @@
 
 This repository contains all infrastructure-as-code for the **Wanderlust** production environment on AWS. It is designed to be fully automated — a single Jenkins pipeline run provisions the entire stack from a blank AWS account to a live EKS cluster with ArgoCD ready to deploy the application.
 
-**What gets created:**
+*What gets created:**
 
 | Layer | Resources |
 |---|---|
