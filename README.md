@@ -310,7 +310,7 @@ Terraform state is stored in S3 and locked via DynamoDB, isolated per environmen
 | S3 key | `wanderlust/prod/terraform.tfstate` |
 | Region | `ap-south-1` |
 
-> **Note on the `dynamodb_table` deprecation warning:** This is a cosmetic warning from the AWS provider v5.x about the new `use_lockfile` parameter. State locking continues to work correctly and the warning is safe to ignore.
+> * Note on the `dynamodb_table` deprecation warning:** This is a cosmetic warning from the AWS provider v5.x about the new `use_lockfile` parameter. State locking continues to work correctly and the warning is safe to ignore.
 
 --
 
