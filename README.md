@@ -394,7 +394,7 @@ Always trigger destroy via Jenkins (`ACTION=destroy`), not `terraform destroy` d
 
 ---
 
-**DynamoDB state lock checksum error**
+*DynamoDB state lock checksum error**
 
 Caused by a stale lock entry. Resolve with:
 
