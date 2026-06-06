@@ -132,6 +132,7 @@ resource "aws_instance" "cicd" {
   }
 
   user_data = templatefile("${path.module}/install_tools.sh", {
+    project          = var.project
     backup_s3_bucket = var.backup_s3_bucket
     environment      = var.environment
     region           = var.aws_region
