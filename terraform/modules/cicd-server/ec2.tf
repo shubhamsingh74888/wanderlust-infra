@@ -162,9 +162,7 @@ resource "aws_eip" "cicd" {
   domain   = "vpc"
 
   # Ensures IP detachment works cleanly during updates
-  lifecycle {
-    create_before_destroy = false
-  }
+ 
 
   tags = {
     Name        = "${local.name_prefix}-cicd-eip"
