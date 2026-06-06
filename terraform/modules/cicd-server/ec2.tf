@@ -162,7 +162,7 @@ resource "aws_eip" "cicd" {
 
   # Ensures IP detachment works cleanly during updates
   lifecycle {
-    create_before_destroy = true
+    create_before_destroy = false
   }
 
   tags = {

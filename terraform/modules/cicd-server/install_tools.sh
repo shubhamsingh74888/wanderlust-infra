@@ -145,6 +145,24 @@ chown -R jenkins:jenkins "$JENKINS_HOME"
 
 echo "[PATH] ✔ Tools symlinked and PATH configured"
 
+# ── 5.5 AUTOMATED EKS ACCESS CONFIGURATION FOR KUBECTL ──────────────────────
+echo "[KUBECONFIG] Configuring authentication mappings..."
+
+# 1. Generate core configuration for the root user account
+export HOME=/root
+aws eks update-kubeconfig --region "${region}" --name "${project}-${environment}-eks" || echo "[KUBECONFIG] ⚠️ Target EKS cluster not fully active yet."
+
+# 2. Synchronize the cluster configurations over to your persistent EBS folder
+mkdir -p "$JENKINS_HOME/.kube"
+if [ -f /root/.kube/config ]; then
+  cp /root/.kube/config "$JENKINS_HOME/.kube/config"
+  chown -R jenkins:jenkins "$JENKINS_HOME/.kube"
+  echo "[KUBECONFIG] ✔ Successfully cloned context keys to Jenkins storage drive."
+else
+  echo "[KUBECONFIG] ❌ Main authentication matrix block dropped."
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
 # 6. Start Jenkins
 systemctl restart jenkins
 echo "[START] ✔ Jenkins started"
