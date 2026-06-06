@@ -413,6 +413,7 @@ aws dynamodb put-item \
 |---|---|
 | [`wanderlust-infra`](https://github.com/shubhamsingh74888/wanderlust-infra) | **This repo** — infrastructure as code |
 | [`shared-lib`](https://github.com/shubhamsingh74888/shared-lib) | Jenkins shared library — all pipeline stage logic |
+| [`wanderlust-gitops`](https://github.com/shubhamsingh74888/wanderlust-gitops) | Kubernetes manifests watched by ArgoCD |
 
 ---
 
