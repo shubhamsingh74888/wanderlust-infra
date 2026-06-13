@@ -1,84 +1,134 @@
 # ============================================================
-#  terraform/main.tf
+# Core Network Infrastructure Module
+# Handles VPC, Border Gateways, and Base Private Route Rules
 # ============================================================
 
-# ── Step 1: Build the Network ────────────────────────────────
-module "vpc" {
-  source = "./modules/vpc"
-
-  project              = var.project
-  environment          = var.environment
-  vpc_cidr             = var.vpc_cidr
-  public_subnet_cidrs  = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
-  availability_zones   = var.availability_zones
+locals {
+  name_prefix = "${var.project}-${var.environment}"
 }
 
-# ── Step 2: Build the Jenkins CI/CD Server ───────────────────
-module "cicd_server" {
-  source = "./modules/cicd-server"
+# ── VPC ──────────────────────────────────────────────────────
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
-  project           = var.project
-  environment       = var.environment
-  aws_region        = var.aws_region
-  vpc_id            = module.vpc.vpc_id
-  subnet_id         = module.vpc.public_subnet_ids[0]
-  instance_type     = var.jenkins_instance_type
-  root_volume_size  = var.jenkins_volume_size
-  data_volume_size  = var.jenkins_data_volume_size
-  backup_s3_bucket  = var.backup_s3_bucket
-  deploy_addons     = var.deploy_addons
-  availability_zone = var.availability_zones[0]
-  ebs_volume_size   = var.jenkins_data_volume_size
-  key_name          = var.key_name
+  tags = {
+    Name        = "${local.name_prefix}-vpc"
+    Environment = var.environment
+    Project     = var.project
+  }
 }
 
-# ── Step 3: Build the EKS Cluster ────────────────────────────
-module "eks" {
-  source = "./modules/eks"
-  count  = var.deploy_eks ? 1 : 0
+# ── Internet Gateway ─────────────────────────────────────────
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
 
-  project              = var.project
-  environment          = var.environment
-  aws_region           = var.aws_region
-  vpc_id               = module.vpc.vpc_id
-  private_subnet_ids   = module.vpc.private_subnet_ids
-  public_subnet_ids    = module.vpc.public_subnet_ids
-  cluster_version      = var.eks_cluster_version
-  node_instance_type   = var.eks_node_instance_type
-  node_min_size        = var.eks_node_min_size
-  node_max_size        = var.eks_node_max_size
-  node_desired_size    = var.eks_node_desired_size
-  jenkins_server_sg_id = module.cicd_server.security_group_id
-  deploy_addons        = var.deploy_addons
-  cluster_name         = "${var.project}-${var.environment}-eks"
+  tags = {
+    Name        = "${local.name_prefix}-igw"
+    Environment = var.environment
+    Project     = var.project
+  }
 }
 
-# ── Step 4: Install ArgoCD via Helm ──────────────────────────
-resource "helm_release" "argocd" {
-  count = var.deploy_eks && var.deploy_addons ? 1 : 0
+# ── Elastic IP for NAT Gateway ───────────────────────────────
+resource "aws_eip" "nat" {
+  domain = "vpc"
 
-  name             = "argocd"
-  repository       = "https://argoproj.github.io/argo-helm"
-  chart            = "argo-cd"
-  version          = "7.4.5"
-  namespace        = "argocd"
-  create_namespace = true
-
-  timeout         = 600
-  wait            = true
-  atomic          = false
-  cleanup_on_fail = false
-
-  set {
-    name  = "server.service.type"
-    value = "LoadBalancer"
+  tags = {
+    Name        = "${local.name_prefix}-nat-eip"
+    Environment = var.environment
+    Project     = var.project
   }
 
-  set {
-    name  = "server.extraArgs[0]"
-    value = "--insecure"
+  depends_on = [aws_internet_gateway.main]
+}
+
+# ── NAT Gateway ──────────────────────────────────────────────
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id # Puts NAT inside the first public subnet
+
+  tags = {
+    Name        = "${local.name_prefix}-nat"
+    Environment = var.environment
+    Project     = var.project
   }
 
-  depends_on = [module.eks]
+  depends_on = [aws_internet_gateway.main]
+}
+
+# ── Route Table: Public ───────────────────────────────────────
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name        = "${local.name_prefix}-public-rt"
+    Environment = var.environment
+    Project     = var.project
+  }
+}
+
+# ── Route Table: Private (Enables Outbound Sync) ───────────────
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main.id # Routes internal cluster out via NAT
+  }
+
+  tags = {
+    Name        = "${local.name_prefix}-private-rt"
+    Environment = var.environment
+    Project     = var.project
+  }
+}
+
+
+# ============================================================
+# VPC Flow Logs & IAM Roles (MOVED OUTSIDE THE ROUTE TABLE)
+# ============================================================
+
+resource "aws_flow_log" "vpc_flow_log" {
+  vpc_id               = aws_vpc.main.id
+  traffic_type         = "ALL"
+  log_destination_type = "cloud-watch-logs"
+  log_destination      = aws_cloudwatch_log_group.flow_log.arn
+  iam_role_arn         = aws_iam_role.flow_log_role.arn
+}
+
+resource "aws_cloudwatch_log_group" "flow_log" {
+  name              = "/vpc/flow-logs/wanderlust"
+  retention_in_days = 7
+}
+
+resource "aws_iam_role" "flow_log_role" {
+  name = "vpc-flow-log-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "vpc-flow-logs.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "flow_log_policy" {
+  name = "vpc-flow-log-policy"
+  role = aws_iam_role.flow_log_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogGroups","logs:DescribeLogStreams"]
+      Resource = "*"
+    }]
+  })
 }
