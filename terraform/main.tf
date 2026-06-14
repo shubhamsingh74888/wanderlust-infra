@@ -48,5 +48,43 @@ module "eks" {
   public_subnet_ids    = module.vpc.public_subnet_ids
   cluster_version      = var.eks_cluster_version
   node_instance_type   = var.eks_node_instance_type
-  node_min_size        = var.eks_node_min
+  node_min_size        = var.eks_node_min_size
+  node_max_size        = var.eks_node_max_size
+  node_desired_size    = var.eks_node_desired_size
+  jenkins_server_sg_id = module.cicd[0].security_group_id
+  deploy_addons        = var.deploy_addons
+  cluster_name         = "${var.project}-${var.environment}-eks"
+}
 
+# ── Step 4: Install ArgoCD via Helm ──────────────────────────
+resource "helm_release" "argocd" {
+  count = var.deploy_eks && var.deploy_addons ? 1 : 0
+
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  namespace        = "argocd"
+  create_namespace = true
+  version          = "5.51.6"
+
+  set {
+    name  = "server.extraArgs[0]"
+    value = "--insecure"
+  }
+
+  depends_on = [module.eks]
+}
+
+# ── SNS Alerting & CloudWatch Alarms ─────────────────────────
+resource "aws_sns_topic" "alerts" {
+  name = "wanderlust-alerts"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = "shubhamsingh74888@gmail.com"
+}
+
+resource "aws_cloudwatch_metric_alarm" "jenkins_cpu" {
+  alarm_name          = "jenkins-high-cpu"
