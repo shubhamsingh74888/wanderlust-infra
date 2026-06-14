@@ -1,12 +1,5 @@
-# ============================================================
-# Root Module — Orchestrates all child modules
-# Direct AWS resources belong in their respective modules
-# ============================================================
-
-# ── Step 1: Build the VPC & Network Layer ────────────────────
 module "vpc" {
-  source = "./modules/vpc"
-
+  source               = "./modules/vpc"
   project              = var.project
   environment          = var.environment
   vpc_cidr             = var.vpc_cidr
@@ -15,11 +8,9 @@ module "vpc" {
   availability_zones   = var.availability_zones
 }
 
-# ── Step 2: Build the Jenkins CI/CD Server ───────────────────
 module "cicd" {
-  source = "./modules/cicd-server"
-  count  = 1
-
+  source            = "./modules/cicd-server"
+  count             = 1
   project           = var.project
   environment       = var.environment
   aws_region        = var.aws_region
@@ -35,11 +26,9 @@ module "cicd" {
   key_name          = var.key_name
 }
 
-# ── Step 3: Build the EKS Cluster ────────────────────────────
 module "eks" {
-  source = "./modules/eks"
-  count  = var.deploy_eks ? 1 : 0
-
+  source               = "./modules/eks"
+  count                = var.deploy_eks ? 1 : 0
   project              = var.project
   environment          = var.environment
   aws_region           = var.aws_region
@@ -56,26 +45,21 @@ module "eks" {
   cluster_name         = "${var.project}-${var.environment}-eks"
 }
 
-# ── Step 4: Install ArgoCD via Helm ──────────────────────────
 resource "helm_release" "argocd" {
-  count = var.deploy_eks && var.deploy_addons ? 1 : 0
-
+  count            = var.deploy_eks && var.deploy_addons ? 1 : 0
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"
   chart            = "argo-cd"
   namespace        = "argocd"
   create_namespace = true
   version          = "5.51.6"
-
   set {
     name  = "server.extraArgs[0]"
     value = "--insecure"
   }
-
   depends_on = [module.eks]
 }
 
-# ── SNS Alerting & CloudWatch Alarms ─────────────────────────
 resource "aws_sns_topic" "alerts" {
   name = "wanderlust-alerts"
 }
@@ -88,3 +72,26 @@ resource "aws_sns_topic_subscription" "email" {
 
 resource "aws_cloudwatch_metric_alarm" "jenkins_cpu" {
   alarm_name          = "jenkins-high-cpu"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 85
+  dimensions          = { InstanceId = module.cicd[0].instance_id }
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "jenkins_status_check" {
+  alarm_name          = "jenkins-status-check-failed"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "StatusCheckFailed"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  dimensions          = { InstanceId = module.cicd[0].instance_id }
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
