@@ -1,94 +1,52 @@
 # ============================================================
-# Core Network Infrastructure Module
-# Handles VPC, Border Gateways, and Base Private Route Rules
+# Root Module — Orchestrates all child modules
+# Direct AWS resources belong in their respective modules
 # ============================================================
 
-locals {
-  name_prefix = "${var.project}-${var.environment}"
+# ── Step 1: Build the VPC & Network Layer ────────────────────
+module "vpc" {
+  source = "./modules/vpc"
+
+  project              = var.project
+  environment          = var.environment
+  vpc_cidr             = var.vpc_cidr
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  availability_zones   = var.availability_zones
 }
 
-# ── VPC ──────────────────────────────────────────────────────
-resource "aws_vpc" "main" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_hostnames = true
-  enable_dns_support   = true
+# ── Step 2: Build the Jenkins CI/CD Server ───────────────────
+module "cicd" {
+  source = "./modules/cicd-server"
+  count  = 1
 
-  tags = {
-    Name        = "${local.name_prefix}-vpc"
-    Environment = var.environment
-    Project     = var.project
-  }
+  project           = var.project
+  environment       = var.environment
+  aws_region        = var.aws_region
+  vpc_id            = module.vpc.vpc_id
+  subnet_id         = module.vpc.public_subnet_ids[0]
+  instance_type     = var.jenkins_instance_type
+  root_volume_size  = var.jenkins_volume_size
+  data_volume_size  = var.jenkins_data_volume_size
+  backup_s3_bucket  = var.backup_s3_bucket
+  deploy_addons     = var.deploy_addons
+  availability_zone = var.availability_zones[0]
+  ebs_volume_size   = var.jenkins_data_volume_size
+  key_name          = var.key_name
 }
 
-# ── Internet Gateway ─────────────────────────────────────────
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+# ── Step 3: Build the EKS Cluster ────────────────────────────
+module "eks" {
+  source = "./modules/eks"
+  count  = var.deploy_eks ? 1 : 0
 
-  tags = {
-    Name        = "${local.name_prefix}-igw"
-    Environment = var.environment
-    Project     = var.project
-  }
-}
-
-# ── Elastic IP for NAT Gateway ───────────────────────────────
-resource "aws_eip" "nat" {
-  domain = "vpc"
-
-  tags = {
-    Name        = "${local.name_prefix}-nat-eip"
-    Environment = var.environment
-    Project     = var.project
-  }
-
-  depends_on = [aws_internet_gateway.main]
-}
-
-# ── NAT Gateway ──────────────────────────────────────────────
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id # Puts NAT inside the first public subnet
-
-  tags = {
-    Name        = "${local.name_prefix}-nat"
-    Environment = var.environment
-    Project     = var.project
-  }
-
-  depends_on = [aws_internet_gateway.main]
-}
-
-# ── Route Table: Public ───────────────────────────────────────
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
-  }
-
-  tags = {
-    Name        = "${local.name_prefix}-public-rt"
-    Environment = var.environment
-    Project     = var.project
-  }
-}
-
-# ── Route Table: Private (Enables Outbound Sync) ───────────────
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id # Routes internal cluster out via NAT
-  }
-
-  tags = {
-    Name        = "${local.name_prefix}-private-rt"
-    Environment = var.environment
-    Project     = var.project
-  }
-}
-
-
+  project              = var.project
+  environment          = var.environment
+  aws_region           = var.aws_region
+  vpc_id               = module.vpc.vpc_id
+  private_subnet_ids   = module.vpc.private_subnet_ids
+  public_subnet_ids    = module.vpc.public_subnet_ids
+  cluster_version      = var.eks_cluster_version
+  node_instance_type   = var.eks_node_instance_type
+  node_min_size        = var.eks_node_min
 
